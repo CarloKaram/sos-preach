@@ -8,23 +8,39 @@ function grlex_lt(α, β)
 end
 
 """
-    monomial_indices(n, r) -> Vector{Vector{Int}}
+    monomial_exponents(n, r, include_constant=false)
 
-Generate exponents for multivariate polynomials with `n` 
-variables up to a total degree of `r` (excluding the degree 0 constant).
+Generate exponent tuples for multivariate polynomials with `n` variables up to
+a total degree of `r`. The degree 0 constant is included when
+`include_constant` is `true`.
 
 The output is sorted in graded lexicographic (grlex) order. Ordering was
-chosen since it's the default in SumOfSquares's `monomials` function.
+chosen since it matches DynamicPolynomials' default `monomials` order.
 """
-function monomial_indices(n::Int64, r::Int64)::Vector{Vector{Int}}
-    indices = Vector{Vector{Int}}()
-    for d in 1:r                              # degree 0 excluded, since Phi_{1:r}
-        for α in multiexponents(n, d)     # all multi-indices of total degree d
-            push!(indices, collect(α))
+function monomial_exponents(n::Integer, r::Integer, include_constant::Bool=false)
+    if n < 0 || r < 0
+        throw(ArgumentError("n and r must be non-negative, got n = $n, and r = $r"))
+    end
+
+    start = include_constant ? 0 : 1
+
+    exponents = NTuple{n, Int}[]
+    for d in start:r
+        for α in multiexponents(n, d)
+            push!(exponents, Tuple(α))
         end
     end
 
-    indices = sort(indices, lt=grlex_lt)
+    sort!(exponents, lt=grlex_lt)
 
-    return indices
+    return exponents
+end
+
+"""
+    exponent_index(exponents)
+
+Map each immutable exponent tuple to its position in `exponents`.
+"""
+function exponent_index(exponents)
+    return Dict(Tuple(α) => i for (i, α) in enumerate(exponents))
 end
