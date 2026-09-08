@@ -2,11 +2,13 @@ using Test
 using DynamicPolynomials
 include("../src/monomials.jl")
 
-function polynomial_exponents(n, r, include_constant=false)
+function polynomial_exponents(n, r, include_constant = false)
     @polyvar x[1:n]
     degrees = include_constant ? (0:r) : (1:r)
-    return [Tuple(degree(monomial, variable) for variable in x)
-            for monomial in monomials(x, degrees)]
+    return [
+        Tuple(degree(monomial, variable) for variable in x)
+            for monomial in monomials(x, degrees)
+    ]
 end
 
 @testset "monomial_exponents" begin

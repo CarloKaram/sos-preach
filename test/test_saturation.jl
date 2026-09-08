@@ -19,7 +19,7 @@ end
     up_sat = build_region(A, B, K, [1])
     low_sat = build_region(A, B, K, [-1])
     lin_reg = build_region(A, B, K, [0])
-    
+
     @testset "Correct matrices for each Ξ" begin
         @test up_sat.D == Diagonal([0])
         @test up_sat.Ā ≈ A
@@ -28,7 +28,7 @@ end
         @test up_sat.d̄ ≈ vec(B)
 
         @test lin_reg.D == Diagonal([1])
-        @test lin_reg.Ā ≈ A + B*K
+        @test lin_reg.Ā ≈ A + B * K
         @test lin_reg.B̄ ≈ zeros(2, 1)
         @test lin_reg.d ≈ [0.0]
         @test lin_reg.d̄ ≈ zeros(2)
@@ -47,7 +47,7 @@ end
         @test !all(low_sat.R * [e; v] .≤ low_sat.c)
         @test !all(lin_reg.R * [e; v] .≤ lin_reg.c)
 
-        
+
         e = [0.0, 0.0]
         @test !all(up_sat.R * [e; v] .≤ up_sat.c)
         @test !all(low_sat.R * [e; v] .≤ low_sat.c)
@@ -99,23 +99,23 @@ end
         for region in regions
             command = [
                 ξ == -1 ? u_min[i] - 1 : ξ == 1 ? u_max[i] + 1 : (u_min[i] + u_max[i]) / 2
-                for (i, ξ) in enumerate(region.Ξ)
+                    for (i, ξ) in enumerate(region.Ξ)
             ]
             e = K_2 \ command
 
             @test all(region.R * [e; v] .≤ region.c)
             @test region.d̄ ≈ B_2 * region.d
             @test region.Ā * e + region.B̄ * v + region.d̄ ≈
-                  saturated_dynamics(A_2, B_2, K_2, e, v, u_min, u_max)
+                saturated_dynamics(A_2, B_2, K_2, e, v, u_min, u_max)
         end
     end
 
     @testset "Coefficient types" begin
-        A_exact = [9//10 1//10; 0//1 4//5]
-        B_exact = [1//2 0//1; 3//10 7//10]
-        K_exact = [1//5 -1//10; -2//5 3//10]
-        u_min_exact = [-2//1, -3//1]
-        u_max_exact = [1//1, 4//1]
+        A_exact = [9 // 10 1 // 10; 0 // 1 4 // 5]
+        B_exact = [1 // 2 0 // 1; 3 // 10 7 // 10]
+        K_exact = [1 // 5 -1 // 10; -2 // 5 3 // 10]
+        u_min_exact = [-2 // 1, -3 // 1]
+        u_max_exact = [1 // 1, 4 // 1]
 
         for T in (Rational{Int}, BigFloat)
             regions = generate_regions(

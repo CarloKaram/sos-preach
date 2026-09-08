@@ -4,7 +4,7 @@ function grlex_lt(α, β)
     da = sum(α)
     db = sum(β)
 
-    da < db || (da == db && α < β)
+    return da < db || (da == db && α < β)
 end
 
 """
@@ -17,7 +17,7 @@ a total degree of `r`. The degree 0 constant is included when
 The output is sorted in graded lexicographic (grlex) order. Ordering was
 chosen since it matches DynamicPolynomials' default `monomials` order.
 """
-function monomial_exponents(n::Integer, r::Integer, include_constant::Bool=false)
+function monomial_exponents(n::Integer, r::Integer, include_constant::Bool = false)
     if n < 0 || r < 0
         throw(ArgumentError("n and r must be non-negative, got n = $n, and r = $r"))
     end
@@ -31,7 +31,7 @@ function monomial_exponents(n::Integer, r::Integer, include_constant::Bool=false
         end
     end
 
-    sort!(exponents, lt=grlex_lt)
+    sort!(exponents, lt = grlex_lt)
 
     return exponents
 end

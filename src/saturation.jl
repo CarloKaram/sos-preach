@@ -34,10 +34,12 @@ function build_region(A, B, K, Ξ::Vector{Int}, u_min = nothing, u_max = nothing
         u_max = Vector{T}(u_max)
     end
 
-    if length(Ξ) != m
-        throw(DimensionMismatch("Ξ has length $(length(Ξ)), but B has m = $m columns! Input dimension disagreement!"))
-    end
-    
+    length(Ξ) == m || throw(
+        DimensionMismatch(
+            "Ξ has length $(length(Ξ)), but B has m = $m columns! Input dimension disagreement!"
+        )
+    )
+
     A = Matrix{T}(A)
     B = Matrix{T}(B)
     K = Matrix{T}(K)
@@ -49,7 +51,7 @@ function build_region(A, B, K, Ξ::Vector{Int}, u_min = nothing, u_max = nothing
     d̄ = B * d
 
     R_sat, c_sat = saturation_inequalities(K, Ξ, u_min, u_max)
-    
+
     # Input constraints: v ∈ [u_min, u_max]
     I_m = Matrix{T}(I, m, m)
     R_input = [zeros(T, m, n) I_m; zeros(T, m, n) -I_m]
@@ -77,31 +79,31 @@ function saturation_inequalities(K, Ξ, u_min, u_max)
     rows_c = T[]
     for i in 1:m
         # build rows for actuator i
-        if Ξ[i] == 1                        # -K_i e - v_i <= -u_max 
+        if Ξ[i] == 1                        # -K_i e - v_i <= -u_max
             row = zeros(T, 1, n + m)
             row[1, 1:n] = -K[i, :]'
-            row[1, n+i] = -one(T)
+            row[1, n + i] = -one(T)
 
-            push!(rows_R, row)  
+            push!(rows_R, row)
             push!(rows_c, -u_max[i])
         elseif Ξ[i] == 0
             row = zeros(T, 1, n + m)
             row[1, 1:n] = K[i, :]'
-            row[1, n+i] = one(T)
-            
+            row[1, n + i] = one(T)
+
             push!(rows_R, row)
             push!(rows_c, u_max[i])
 
             row = zeros(T, 1, n + m)
             row[1, 1:n] = -K[i, :]'
-            row[1, n+i] = -one(T)
-            
+            row[1, n + i] = -one(T)
+
             push!(rows_R, row)
             push!(rows_c, -u_min[i])
         else  # Xi[i] == -1                # K_i e + v_i <= u_min
             row = zeros(T, 1, n + m)
             row[1, 1:n] = K[i, :]'
-            row[1, n+i] = one(T)
+            row[1, n + i] = one(T)
 
             push!(rows_R, row)
             push!(rows_c, u_min[i])
