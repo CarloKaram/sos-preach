@@ -1,4 +1,6 @@
+using Distributions
 using Test
+include("../src/system.jl")
 include("../src/saturation.jl")
 
 # Test system
@@ -10,15 +12,17 @@ A_2 = [0.9 0.1; 0.0 0.8]
 B_2 = [0.5 0.0; 0.3 0.7]
 K_2 = [0.2 -0.1; -0.4 0.3]
 
-function saturated_dynamics(A, B, K, e, v, u_min, u_max)
-    return A * e + B * (clamp.(K * e + v, u_min, u_max) - v)
-end
-
+system_m1 = SaturatedSystem(
+    A, B, K, zeros(0, 2), Float64[], Normal.(zeros(2), ones(2)),
+)
+system_m2 = SaturatedSystem(
+    A_2, B_2, K_2, zeros(0, 2), Float64[], Normal.(zeros(2), ones(2)),
+)
 
 @testset "build_region" begin
-    up_sat = build_region(A, B, K, [1])
-    low_sat = build_region(A, B, K, [-1])
-    lin_reg = build_region(A, B, K, [0])
+    up_sat = build_region(system_m1, [1])
+    low_sat = build_region(system_m1, [-1])
+    lin_reg = build_region(system_m1, [0])
 
     @testset "Correct matrices for each Ξ" begin
         @test up_sat.D == Diagonal([0])
@@ -72,8 +76,8 @@ end
 end
 
 @testset "generate_regions" begin
-    regions_m1 = generate_regions(A, B, K)
-    regions_m2 = generate_regions(A_2, B_2, K_2)
+    regions_m1 = generate_regions(system_m1)
+    regions_m2 = generate_regions(system_m2)
 
     @testset "Region count" begin
         @test regions_m1 isa Vector{SaturationRegion{Float64}}
@@ -93,20 +97,32 @@ end
     @testset "Asymmetric bounds and affine dynamics" begin
         u_min = [-2.0, -3.0]
         u_max = [1.0, 4.0]
-        regions = generate_regions(A_2, B_2, K_2, u_min, u_max)
+        system = SaturatedSystem(
+            A_2,
+            B_2,
+            K_2,
+            zeros(0, 2),
+            Float64[],
+            Normal.(zeros(2), ones(2));
+            u_min,
+            u_max,
+        )
+        regions = generate_regions(system)
         v = zeros(2)
 
         for region in regions
+            # choose an input or "command" that activates saturation pattern Ξ
             command = [
                 ξ == -1 ? u_min[i] - 1 : ξ == 1 ? u_max[i] + 1 : (u_min[i] + u_max[i]) / 2
                     for (i, ξ) in enumerate(region.Ξ)
             ]
+            # solve for points e such that K_2 e + v = command
             e = K_2 \ command
-
+            # verify that (e, v) pair belongs in fact to the region
             @test all(region.R * [e; v] .≤ region.c)
             @test region.d̄ ≈ B_2 * region.d
             @test region.Ā * e + region.B̄ * v + region.d̄ ≈
-                saturated_dynamics(A_2, B_2, K_2, e, v, u_min, u_max)
+                saturated_error_dynamics(system, e, v)
         end
     end
 
@@ -118,10 +134,17 @@ end
         u_max_exact = [1 // 1, 4 // 1]
 
         for T in (Rational{Int}, BigFloat)
-            regions = generate_regions(
-                T.(A_exact), T.(B_exact), T.(K_exact),
-                T.(u_min_exact), T.(u_max_exact),
+            system = SaturatedSystem(
+                T.(A_exact),
+                T.(B_exact),
+                T.(K_exact),
+                zeros(T, 0, 2),
+                T[],
+                Normal.(zeros(2), ones(2));
+                u_min=T.(u_min_exact),
+                u_max=T.(u_max_exact),
             )
+            regions = generate_regions(system)
 
             @test regions isa Vector{SaturationRegion{T}}
             @test all(region -> region.d̄ == T.(B_exact) * region.d, regions)
