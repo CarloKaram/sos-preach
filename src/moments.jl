@@ -62,7 +62,7 @@ function _raw_moment(dist::Gamma, k::Integer)
     moment = one(promote_type(typeof(α), typeof(θ)))
 
     for j in 1:k
-        moment *= θ * (α + j - 1)
+        moment *= θ * (α + (j - 1))
     end
 
     return moment

@@ -16,12 +16,13 @@ struct SOSSolution{T,E,S,M}
     μ::M
 end
 
-struct SOSSolveResult{S,H,V}
+struct SOSSolveResult{S,H,V,T}
     status::Symbol
     stop_reason::Symbol
     solution::S
     history::H
     validation::V
+    timing::T
 end
 
 function _monomial_basis(variables, exponents)
@@ -66,6 +67,7 @@ function _solve_q_step(
         γ,
         σ_half_degree,
         fixed_μ,
+        even,
     )
     model = SOSModel(optimizer)
     silent && set_silent(model)
@@ -75,6 +77,11 @@ function _solve_q_step(
     @variable(model, Q[1:length(Φ), 1:length(Φ)], PSD)
     @variable(model, 0 <= ρ <= 1)
     V = sum(Q[i, j] * Φ[i] * Φ[j] for i in eachindex(Φ), j in eachindex(Φ))
+    if even
+        for (monomial, coefficient) in zip(monomials(V), coefficients(V))
+            isodd(degree(monomial)) && @constraint(model, coefficient == 0)
+        end
+    end
 
     positivity_polynomial = V - γ * sum(eᵢ^2 for eᵢ in e)
     positivity_constraint = @constraint(model, positivity_polynomial in SOSCone())
@@ -203,7 +210,9 @@ function solve_sos_program(
         initial_μ=1,
         validation_tolerance=1e-7,
         silent=true,
+        even=false,
     )
+    start_time = time()
     0 < λ < 1 || throw(ArgumentError("λ must satisfy 0 < λ < 1"))
     0 < ε < 1 || throw(ArgumentError("ε must satisfy 0 < ε < 1"))
     0 <= ζ < τ_inf || throw(ArgumentError("ζ must satisfy 0 ≤ ζ < τ_inf"))
@@ -215,28 +224,40 @@ function solve_sos_program(
     basis_exponents = monomial_exponents(n, r)
     noise_exponents = monomial_exponents(n, r, true)
     M_w = moment_matrix(system.noise, noise_exponents)
-    regions = generate_regions(system)
+    noise_degrees = sum.(noise_exponents)
+    prune_symmetric = even && all(
+        iszero(M_w[i, j])
+        for i in axes(M_w, 1), j in axes(M_w, 2)
+        if isodd(noise_degrees[i] + noise_degrees[j])
+    )
+    regions = generate_regions(system; prune_symmetric)
     @polyvar e[1:n] v[1:m]
     generators = [_normalized_region_generators(region, e, v) for region in regions]
 
     fixed_μ = [initial_μ * one(e[1]) for _ in axes(system.H, 1)]
+    setup_time = time() - start_time
     previous_ρ = 1.0
     history = NamedTuple[]
     last_complete = nothing
     stop_reason = :iteration_limit
 
     for iteration in 1:max_iterations
+        alternation_start = time()
+        q_start = time()
         Q_step = _solve_q_step(
             system, optimizer, silent, regions, generators, e, v,
-            basis_exponents, M_w, λ, β, τ_inf, γ, σ_half_degree, fixed_μ,
+            basis_exponents, M_w, λ, β, τ_inf, γ, σ_half_degree, fixed_μ, even,
         )
         Q_status = termination_status(Q_step.model)
         Q_primal = primal_status(Q_step.model)
         if !_has_feasible_point(Q_step.model)
+            q_time = time() - q_start
+            alternation_time = time() - alternation_start
             push!(history, (
                 iteration=iteration, Q_status=Q_status, Q_primal=Q_primal,
                 Q_ρ=nothing, μ_status=nothing, μ_primal=nothing, ρ=nothing,
-                decrease=nothing,
+                decrease=nothing, q_time=q_time, μ_time=0.0,
+                alternation_time=alternation_time,
             ))
             stop_reason = :q_step_failed
             break
@@ -244,24 +265,32 @@ function solve_sos_program(
 
         Q = Matrix(value.(Q_step.Q))
         Q_ρ = value(Q_step.ρ)
+        σ = [value.(polynomial.(grams)) for grams in Q_step.σ_grams]
+        q_time = time() - q_start
+
+        μ_start = time()
         μ_step = _solve_μ_step(
             system, optimizer, silent, e, Q, basis_exponents, τ_inf, μ_half_degree,
         )
         μ_status = termination_status(μ_step.model)
         μ_primal = primal_status(μ_step.model)
         if !_has_feasible_point(μ_step.model)
+            μ_time = time() - μ_start
+            alternation_time = time() - alternation_start
             push!(history, (
                 iteration=iteration, Q_status=Q_status, Q_primal=Q_primal,
                 Q_ρ=Q_ρ, μ_status=μ_status, μ_primal=μ_primal, ρ=nothing,
-                decrease=nothing,
+                decrease=nothing, q_time=q_time, μ_time=μ_time,
+                alternation_time=alternation_time,
             ))
             stop_reason = :mu_step_failed
             break
         end
 
         ρ = value(μ_step.ρ)
-        σ = [value.(polynomial.(grams)) for grams in Q_step.σ_grams]
         μ = value.(polynomial.(μ_step.μ_grams))
+        μ_time = time() - μ_start
+        alternation_time = time() - alternation_start
         decrease = previous_ρ - ρ
         solution = _solution(
             Q, ρ, λ, β, ε, τ_inf, ζ, γ, basis_exponents, σ, μ,
@@ -274,7 +303,8 @@ function solve_sos_program(
         push!(history, (
             iteration=iteration, Q_status=Q_status, Q_primal=Q_primal,
             Q_ρ=Q_ρ, μ_status=μ_status, μ_primal=μ_primal, ρ=ρ,
-            decrease=decrease,
+            decrease=decrease, q_time=q_time, μ_time=μ_time,
+            alternation_time=alternation_time,
         ))
         fixed_μ = μ
 
@@ -285,15 +315,44 @@ function solve_sos_program(
         previous_ρ = ρ
     end
 
-    last_complete === nothing &&
-        return SOSSolveResult(:no_solution, stop_reason, nothing, history, nothing)
+    q_time = sum(iteration.q_time for iteration in history)
+    μ_time = sum(iteration.μ_time for iteration in history)
+    alternation_time = sum(iteration.alternation_time for iteration in history)
 
+    if last_complete === nothing
+        total_time = time() - start_time
+        timing = (
+            setup_time=setup_time,
+            q_time=q_time,
+            μ_time=μ_time,
+            alternation_time=alternation_time,
+            validation_time=0.0,
+            optimization_time=total_time,
+            overhead_time=total_time - setup_time - alternation_time,
+            total_time=total_time,
+        )
+        return SOSSolveResult(:no_solution, stop_reason, nothing, history, nothing, timing)
+    end
+
+    validation_start = time()
     validation = _validate_solution(
         last_complete.solution.Q,
         last_complete.targets,
         last_complete.multipliers;
         tolerance=validation_tolerance,
     )
+    validation_time = time() - validation_start
     status = validation.passed ? :numerically_validated : :validation_failed
-    return SOSSolveResult(status, stop_reason, last_complete.solution, history, validation)
+    total_time = time() - start_time
+    timing = (
+        setup_time=setup_time,
+        q_time=q_time,
+        μ_time=μ_time,
+        alternation_time=alternation_time,
+        validation_time=validation_time,
+        optimization_time=total_time - validation_time,
+        overhead_time=total_time - setup_time - alternation_time - validation_time,
+        total_time=total_time,
+    )
+    return SOSSolveResult(status, stop_reason, last_complete.solution, history, validation, timing)
 end

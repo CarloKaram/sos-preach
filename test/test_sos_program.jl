@@ -11,6 +11,7 @@ include("../src/moments.jl")
 include("../src/drift.jl")
 include("../src/certificate_validation.jl")
 include("../src/sos_program.jl")
+include("../scripts/lambda_search.jl")
 
 mutable struct CountingCSDPOptimizer
     calls::Int
@@ -124,6 +125,18 @@ end
         @test length(result.history) == 1
         @test result.history[1].Q_primal == JuMP.MOI.FEASIBLE_POINT
         @test result.history[1].μ_primal == JuMP.MOI.FEASIBLE_POINT
+        @test all(isfinite, values(result.timing))
+        @test all(>=(0), values(result.timing))
+        @test result.history[1].q_time >= 0
+        @test result.history[1].μ_time >= 0
+        @test result.history[1].alternation_time >=
+              result.history[1].q_time + result.history[1].μ_time - 1e-6
+        @test isapprox(
+            result.timing.total_time,
+            result.timing.setup_time + result.timing.alternation_time +
+            result.timing.validation_time + result.timing.overhead_time;
+            atol=1e-6,
+        )
     end
 
     @testset "Stalled feasible point" begin
@@ -167,6 +180,33 @@ end
         @test result.stop_reason == :q_step_failed
         @test result.solution === nothing
         @test result.validation === nothing
+        @test result.history[1].q_time >= 0
+        @test result.history[1].μ_time == 0
+        @test result.timing.validation_time == 0
+    end
+
+    @testset "Golden-section timing" begin
+        solve_at_λ = λ -> (
+            solution=(ρ=(λ - 0.5)^2,),
+            status=:numerically_validated,
+            timing=(
+                setup_time=0.0,
+                q_time=0.0,
+                μ_time=0.0,
+                alternation_time=0.0,
+                validation_time=0.0,
+                optimization_time=0.0,
+                overhead_time=0.0,
+                total_time=0.0,
+            ),
+        )
+        winner = golden_section_search(solve_at_λ, 0.0, 1.0; tolerance=0.1)
+
+        @test !isempty(winner.evaluations)
+        @test length(winner.evaluations) == 7
+        @test all(evaluation -> evaluation.timing.total_time == 0, winner.evaluations)
+        @test winner.timing.λ_evaluation_time == 0
+        @test winner.timing.total_time >= winner.timing.λ_evaluation_time
     end
 
     @testset "Solution helpers" begin
