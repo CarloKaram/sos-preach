@@ -94,6 +94,16 @@ end
         @test [region.Ξ for region in regions_m2] == expected_m2
     end
 
+    @testset "Symmetric region pruning" begin
+        @test [
+            region.Ξ for region in generate_regions(system_m1; prune_symmetric=true)
+        ] == [[-1], [0]]
+
+        @test [
+            region.Ξ for region in generate_regions(system_m2; prune_symmetric=true)
+        ] == [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 0]]
+    end
+
     @testset "Asymmetric bounds and affine dynamics" begin
         u_min = [-2.0, -3.0]
         u_max = [1.0, 4.0]
@@ -108,6 +118,9 @@ end
             u_max,
         )
         regions = generate_regions(system)
+        @test [
+            region.Ξ for region in generate_regions(system; prune_symmetric=true)
+        ] == [region.Ξ for region in regions]
         v = zeros(2)
 
         for region in regions

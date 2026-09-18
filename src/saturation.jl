@@ -42,9 +42,12 @@ function build_region(system::SaturatedSystem{T}, Ξ::Vector{Int})::SaturationRe
     return SaturationRegion(Ξ, D, Ā, B̄, d, d̄, R, c)
 end
 
-function generate_regions(system::SaturatedSystem)
+function generate_regions(system::SaturatedSystem; prune_symmetric=false)
     m = size(system.B, 2)
     patterns = sort!(vec(collect(Iterators.product(fill([-1, 0, 1], m)...))))
+    if prune_symmetric && system.u_min == -system.u_max
+        filter!(Ξ -> Ξ <= map(-, Ξ), patterns)
+    end
     return [build_region(system, collect(Ξ)) for Ξ in patterns]
 end
 
