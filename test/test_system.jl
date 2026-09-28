@@ -20,14 +20,28 @@ noise = Normal.(zeros(2), ones(2))
         @test system isa SaturatedSystem{Float64,typeof(noise)}
         @test system.u_min == [-1.0]
         @test system.u_max == [1.0]
+        @test system.v_min == [-1.0]
+        @test system.v_max == [1.0]
         @test size(system.A, 1) == 2
         @test size(system.B, 2) == 1
         @test size(system.H, 1) == 4
         @test system.noise === noise
 
-        asymmetric = SaturatedSystem(A, B, K, H, h, noise; u_min=[-2.0], u_max=[3.0])
+        asymmetric = SaturatedSystem(
+            A, B, K, H, h, noise;
+            u_min=[-2.0], u_max=[3.0], v_min=[-1.0], v_max=[2.0],
+        )
         @test asymmetric.u_min == [-2.0]
         @test asymmetric.u_max == [3.0]
+        @test asymmetric.v_min == [-1.0]
+        @test asymmetric.v_max == [2.0]
+
+        promoted = SaturatedSystem(
+            A, B, K, H, h, noise;
+            v_min=BigFloat[-0.5], v_max=BigFloat[0.5],
+        )
+        @test eltype(promoted.A) == BigFloat
+        @test eltype(promoted.v_min) == BigFloat
     end
 
     @testset "Invalid data" begin
@@ -37,8 +51,13 @@ noise = Normal.(zeros(2), ones(2))
         @test_throws DimensionMismatch SaturatedSystem(A, B, K, zeros(4, 3), h, noise)
         @test_throws DimensionMismatch SaturatedSystem(A, B, K, H, h[1:3], noise)
         @test_throws DimensionMismatch SaturatedSystem(A, B, K, H, h, noise; u_min=[-1.0, -1.0])
+        @test_throws DimensionMismatch SaturatedSystem(A, B, K, H, h, noise; v_min=[-1.0, -1.0])
+        @test_throws DimensionMismatch SaturatedSystem(A, B, K, H, h, noise; v_max=[1.0, 1.0])
         @test_throws DimensionMismatch SaturatedSystem(A, B, K, H, h, [Normal()])
         @test_throws ArgumentError SaturatedSystem(A, B, K, H, h, noise; u_min=[1.0], u_max=[1.0])
+        @test_throws ArgumentError SaturatedSystem(A, B, K, H, h, noise; v_min=[0.5], v_max=[0.5])
+        @test_throws ArgumentError SaturatedSystem(A, B, K, H, h, noise; v_min=[-2.0])
+        @test_throws ArgumentError SaturatedSystem(A, B, K, H, h, noise; v_max=[2.0])
         @test_throws ArgumentError SaturatedSystem(A, B, K, H, h, "noise")
     end
 
