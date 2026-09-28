@@ -69,6 +69,16 @@ include("../src/drift.jl")
         @test Δ ≈ 0.5e^2 + 0.3 - (f^2 + 1.0)
     end
 
+    @testset "Explicit successor dynamics" begin
+        M_w = moment_matrix(Normal(), noise_basis_1d)
+        f = 0.8e + 1.2u
+        Δ = drift_polynomial(
+            [1.0 0.0; 0.0 0.0], 0.5, 0.3, [f], [e], M_w, basis_1d,
+        )
+
+        @test Δ ≈ 0.5e^2 + 0.3 - (f^2 + 1.0)
+    end
+
     @testset "Multivariate ordering" begin
         A₂ = Matrix{Float64}(I, 2, 2)
         B₂ = zeros(2, 1)

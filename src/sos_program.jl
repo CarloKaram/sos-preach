@@ -55,16 +55,15 @@ function _solve_q_step(
         system,
         optimizer,
         silent,
-        regions,
-        generators,
+        drift_domains,
         e,
-        v,
+        drift_variables,
         basis_exponents,
         M_w,
         λ,
         β,
         τ_inf,
-        γ,
+        γ_floor,
         σ_half_degree,
         fixed_μ,
         even,
@@ -72,10 +71,11 @@ function _solve_q_step(
     model = SOSModel(optimizer)
     silent && set_silent(model)
     Φ = _monomial_basis(e, basis_exponents)
-    σ_basis = monomials([e; v], 0:σ_half_degree)
+    σ_basis = monomials([e; drift_variables], 0:σ_half_degree)
 
     @variable(model, Q[1:length(Φ), 1:length(Φ)], PSD)
     @variable(model, 0 <= ρ <= 1)
+    @variable(model, γ >= γ_floor)
     V = sum(Q[i, j] * Φ[i] * Φ[j] for i in eachindex(Φ), j in eachindex(Φ))
     if even
         for (monomial, coefficient) in zip(monomials(V), coefficients(V))
@@ -93,22 +93,24 @@ function _solve_q_step(
     multipliers = Pair{String,Any}[]
     σ_grams = Vector{Any}[]
 
-    for (j, region) in enumerate(regions)
-        grams = @variable(
-            model,
-            [1:length(generators[j])],
-            SOSPoly(σ_basis),
-            base_name="σ_$(j)",
-        )
+    for (j, domain) in enumerate(drift_domains)
+        grams = Any[]
+        for ℓ in eachindex(domain.generators)
+            push!(grams, @variable(
+                model,
+                variable_type=SOSPoly(σ_basis),
+                base_name="σ_$(j)_$(ℓ)",
+            ))
+        end
         σ = polynomial.(grams)
-        Δ = drift_polynomial(Q, λ, β, region, e, v, M_w, basis_exponents)
+        Δ = drift_polynomial(Q, λ, β, domain.successor, e, M_w, basis_exponents)
         polynomial_value = Δ - sum(
-            σ[ℓ] * generators[j][ℓ] for ℓ in eachindex(σ)
+            σ[ℓ] * domain.generators[ℓ] for ℓ in eachindex(σ)
         )
         constraint = @constraint(model, polynomial_value in SOSCone())
         push!(
             targets,
-            (label="drift region $j", polynomial=polynomial_value, constraint=constraint),
+            (label=domain.label, polynomial=polynomial_value, constraint=constraint),
         )
         append!(multipliers, ["σ[$j,$ℓ]" => grams[ℓ] for ℓ in eachindex(grams)])
         push!(σ_grams, grams)
@@ -126,6 +128,7 @@ function _solve_q_step(
         model=model,
         Q=Q,
         ρ=ρ,
+        γ=γ,
         σ_grams=σ_grams,
         targets=targets,
         multipliers=multipliers,
@@ -193,6 +196,17 @@ end
 Solve the paper's fixed-`λ` alternating SOS program. The multiplier degree
 arguments are Gram-basis half-degrees. A returned solution is accepted only
 after direct numerical checks of the Gram matrices from its `Q`- and `μ`-steps.
+
+`saturation_formulation=:semialgebraic` uses one certificate in variables
+`(e, s)`. With `even=false`, the domain is exact and its multipliers are ordered
+as interval products, lower-end sectors, and upper-end sectors. With
+`even=true`, the domain is conservatively pruned to the full actuator range,
+with multipliers ordered as upper bounds, lower bounds, and sector constraints.
+`saturation_formulation=:pwa` instead uses the piecewise-affine saturation
+regions. `σ_half_degree` sets the half-degree of every saturation-domain
+multiplier. `γ_floor` is the positive lower bound on the `γ` decision
+variable used in the Lyapunov positivity certificate; the optimized value is
+stored in `solution.γ`.
 """
 function solve_sos_program(
         system::SaturatedSystem,
@@ -201,7 +215,7 @@ function solve_sos_program(
         ε,
         τ_inf,
         ζ,
-        γ,
+        γ_floor,
         r,
         σ_half_degree,
         μ_half_degree,
@@ -211,12 +225,17 @@ function solve_sos_program(
         validation_tolerance=1e-7,
         silent=true,
         even=false,
+        saturation_formulation=:semialgebraic,
     )
     start_time = time()
+    saturation_formulation in (:semialgebraic, :pwa) || throw(ArgumentError(
+        "saturation_formulation must be :semialgebraic or :pwa, " *
+        "got $saturation_formulation",
+    ))
     0 < λ < 1 || throw(ArgumentError("λ must satisfy 0 < λ < 1"))
     0 < ε < 1 || throw(ArgumentError("ε must satisfy 0 < ε < 1"))
     0 <= ζ < τ_inf || throw(ArgumentError("ζ must satisfy 0 ≤ ζ < τ_inf"))
-    γ > 0 || throw(ArgumentError("γ must be positive"))
+    γ_floor > 0 || throw(ArgumentError("γ_floor must be positive"))
 
     β = ε * (1 - λ) * (τ_inf - ζ)
     n = size(system.A, 1)
@@ -224,15 +243,36 @@ function solve_sos_program(
     basis_exponents = monomial_exponents(n, r)
     noise_exponents = monomial_exponents(n, r, true)
     M_w = moment_matrix(system.noise, noise_exponents)
-    noise_degrees = sum.(noise_exponents)
-    prune_symmetric = even && all(
-        iszero(M_w[i, j])
-        for i in axes(M_w, 1), j in axes(M_w, 2)
-        if isodd(noise_degrees[i] + noise_degrees[j])
-    )
-    regions = generate_regions(system; prune_symmetric)
-    @polyvar e[1:n] v[1:m]
-    generators = [_normalized_region_generators(region, e, v) for region in regions]
+    @polyvar e[1:n]
+    if saturation_formulation == :pwa
+        noise_degrees = sum.(noise_exponents)
+        prune_symmetric = even && all(
+            iszero(M_w[i, j])
+            for i in axes(M_w, 1), j in axes(M_w, 2)
+            if isodd(noise_degrees[i] + noise_degrees[j])
+        )
+        regions = generate_regions(system; prune_symmetric)
+        @polyvar v[1:m]
+        drift_variables = v
+        drift_domains = [
+            (
+                label="drift region $j",
+                successor=region.Ā * e + region.B̄ * v + region.d̄,
+                generators=_normalized_region_generators(region, e, v),
+            )
+            for (j, region) in enumerate(regions)
+        ]
+    else
+        @polyvar s[1:m]
+        drift_variables = s
+        drift_domains = [(
+            label="semialgebraic drift",
+            successor=system.A * e + system.B * s,
+            generators=semialgebraic_saturation_generators(
+                system, e, s; prune_symmetric=even,
+            ),
+        )]
+    end
 
     fixed_μ = [initial_μ * one(e[1]) for _ in axes(system.H, 1)]
     setup_time = time() - start_time
@@ -245,8 +285,9 @@ function solve_sos_program(
         alternation_start = time()
         q_start = time()
         Q_step = _solve_q_step(
-            system, optimizer, silent, regions, generators, e, v,
-            basis_exponents, M_w, λ, β, τ_inf, γ, σ_half_degree, fixed_μ, even,
+            system, optimizer, silent, drift_domains, e, drift_variables,
+            basis_exponents, M_w, λ, β, τ_inf, γ_floor, σ_half_degree, fixed_μ,
+            even,
         )
         Q_status = termination_status(Q_step.model)
         Q_primal = primal_status(Q_step.model)
@@ -265,6 +306,7 @@ function solve_sos_program(
 
         Q = Matrix(value.(Q_step.Q))
         Q_ρ = value(Q_step.ρ)
+        γ = value(Q_step.γ)
         σ = [value.(polynomial.(grams)) for grams in Q_step.σ_grams]
         q_time = time() - q_start
 

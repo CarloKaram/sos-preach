@@ -44,15 +44,15 @@ JuMP.termination_status(::StalledFeasibleModel) = JuMP.MOI.SLOW_PROGRESS
 JuMP.primal_status(::StalledFeasibleModel) = JuMP.MOI.FEASIBLE_POINT
 JuMP.has_values(::StalledFeasibleModel) = true
 
-function solve_test_system(optimizer; kwargs...)
+function solve_test_system(optimizer; system=test_system(), kwargs...)
     solve_sos_program(
-        test_system(),
+        system,
         optimizer;
         λ=0.5,
         ε=0.5,
         τ_inf=10.0,
         ζ=1.0,
-        γ=0.01,
+        γ_floor=0.01,
         r=1,
         σ_half_degree=0,
         μ_half_degree=0,
@@ -68,7 +68,7 @@ end
             ε=0.5,
             τ_inf=10.0,
             ζ=1.0,
-            γ=0.01,
+            γ_floor=0.01,
             r=1,
             σ_half_degree=0,
             μ_half_degree=0,
@@ -84,7 +84,11 @@ end
             test_system(), optimizer; common..., λ=0.5, ζ=10.0,
         )
         @test_throws ArgumentError solve_sos_program(
-            test_system(), optimizer; common..., λ=0.5, γ=0.0,
+            test_system(), optimizer; common..., λ=0.5, γ_floor=0.0,
+        )
+        @test_throws ArgumentError solve_sos_program(
+            test_system(), optimizer;
+            common..., λ=0.5, saturation_formulation=:invalid,
         )
         @test optimizer.calls == 0
     end
@@ -116,11 +120,13 @@ end
         @test isempty(result.validation.failed_checks)
         @test result.solution !== nothing
         @test result.solution.β == 2.25
+        @test result.solution.γ >= 0.01
         @test result.solution.basis_exponents == [(1,)]
         @test size(result.solution.Q) == (1, 1)
         @test all(isfinite, result.solution.Q)
         @test 0 <= result.solution.ρ <= 1
-        @test length(result.solution.σ) == 3
+        @test length(result.solution.σ) == 1
+        @test length(only(result.solution.σ)) == 3
         @test length(result.solution.μ) == 2
         @test length(result.history) == 1
         @test result.history[1].Q_primal == JuMP.MOI.FEASIBLE_POINT
@@ -137,6 +143,50 @@ end
             result.timing.validation_time + result.timing.overhead_time;
             atol=1e-6,
         )
+    end
+
+    @testset "Explicit PWA formulation" begin
+        optimizer = CountingCSDPOptimizer(0, 0)
+        result = solve_test_system(
+            optimizer;
+            max_iterations=1,
+            convergence_tolerance=0.0,
+            saturation_formulation=:pwa,
+        )
+
+        @test optimizer.calls == 2
+        @test result.status == :numerically_validated
+        @test length(result.solution.σ) == 3
+    end
+
+    @testset "Pruned semialgebraic formulation" begin
+        system = SaturatedSystem(
+            [0.2;;],
+            [0.1;;],
+            [-0.1;;],
+            [1.0; -1.0;;],
+            [100.0, 100.0],
+            Normal();
+            u_min=[-2.0],
+            u_max=[3.0],
+            v_min=[-1.0],
+            v_max=[2.0],
+        )
+        optimizer = CountingCSDPOptimizer(0, 0)
+        result = solve_test_system(
+            optimizer;
+            system,
+            even=true,
+            saturation_formulation=:semialgebraic,
+            max_iterations=1,
+            convergence_tolerance=0.0,
+        )
+
+        @test optimizer.calls == 2
+        @test result.status == :numerically_validated
+        @test result.validation.passed
+        @test length(result.solution.σ) == 1
+        @test length(only(result.solution.σ)) == 3
     end
 
     @testset "Stalled feasible point" begin

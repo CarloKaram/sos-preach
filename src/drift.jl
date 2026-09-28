@@ -11,6 +11,16 @@ Construct the regional drift polynomial
 """
 function drift_polynomial(Q, λ, β, region, e, v, M_w, basis_exponents)
     f = region.Ā * e + region.B̄ * v + region.d̄
+    return drift_polynomial(Q, λ, β, f, e, M_w, basis_exponents)
+end
+
+"""
+    drift_polynomial(Q, λ, β, f, e, M_w, basis_exponents)
+
+Construct the drift polynomial for a deterministic successor `f`. This form is
+shared by regional PWA dynamics and the semialgebraic saturation dynamics.
+"""
+function drift_polynomial(Q, λ, β, f, e, M_w, basis_exponents)
     Φ = [prod(e[k]^α[k] for k in eachindex(e)) for α in basis_exponents]
     T = _translation_matrix(f, basis_exponents)
 
