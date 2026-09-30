@@ -2,10 +2,7 @@ This repository implements the sum-of-squares programs from
 [*Beyond Ellipsoids: Semi-Algebraic Tightening for Chance Constraints Under
 Actuator Saturation*](https://arxiv.org/abs/2607.19639).
 
-The code constructs polynomial Lyapunov certificates for stochastic linear
-systems subject to unbounded additive disturbances and actuator saturation. It computes
-finite-time probabilistic reachable sets and probabilistic ultimate bounds
-(PUBs), with either the default semialgebraic saturation certificate or the computationally expensive piecewise-affine formulation.
+The code constructs polynomial Lyapunov certificates for stochastic linear systems subject to unbounded additive disturbances and actuator saturation. It computes finite-time probabilistic reachable sets and probabilistic ultimate bounds (PUBs) from sublevel sets of the Lyapunov function.
 
 ## Setup
 
@@ -113,7 +110,7 @@ result = solve_sos_program(
     initial_μ=5.0,
     max_iterations=5,
     validation_tolerance=2e-7,
-    saturation_formulation=:semialgebraic,
+    saturation_formulation=:semialgebraic,    # optional (default setting)
 )
 
 if result.solution === nothing
@@ -130,7 +127,7 @@ Here `r` is the half-degree of the Lyapunov polynomial, while
 `σ_half_degree` and `μ_half_degree` control the SOS multiplier bases. The
 supplied `γ_floor` is a lower bound on the optimized positivity coefficient.
 The default `saturation_formulation=:semialgebraic` uses one saturation domain
-in `(e, s)`; `:pwa` selects the regional piecewise-affine formulation.
+in `(e, v, u)`; `:pwa` selects the regions-of-saturation piecewise-affine formulation.
 
 `solve_sos_program` solves for a fixed `λ`. To optimize over `λ`, include
 `scripts/lambda_search.jl` and follow the `solve_at_λ` pattern used by the main
